@@ -228,6 +228,26 @@ Es gibt keinen geheimen Schlüssel im Frontend; Aktionen laufen über die SQL-Fu
 - Filter (Status, KI-Urteil, Sprache, Thema), Mehrfachauswahl, Tasten **↑/↓ A R X**.
 - Bereits vergebene Punkte alter Runden ändern sich nicht.
 
+### Admin-Login per Passwort
+
+Zusätzlich zu Google/GitHub/Discord: auf **/admin** das Feld „Admin-Passwort“. Die Edge Function
+`admin-login` prüft es gegen einen **scrypt-Hash** im Supabase-Secret `ADMIN_PASSWORD_HASH` – das
+Passwort selbst steht nirgends (nicht im Code, Repo, Log). Setzen/ändern, verdeckte Eingabe:
+
+```bash
+bash scripts/set-admin-password.sh
+```
+
+- **Versuchsbremse:** 5 Fehlversuche in 15 min pro Gerät bzw. IP → 15 min gesperrt; 20 Fehlversuche
+  in 24 h insgesamt → Passwort-Login 1 h für alle aus. Jeder Versuch steht in `admin_login_attempts`
+  und `admin_log` (Dashboard → 🔐 Sicherheit). Regeln: `supabase/functions/_shared/adminLogin.ts`.
+- **Erfolg:** normale Sitzung des Admin-Kontos (serverseitig eingelöster Magic-Link-Token), auf
+  30 Tage begrenzt. Rechte prüfen danach wie immer `is_admin()`/RLS.
+- **Admin-Geräte:** Dashboard → 🔐 Sicherheit: alle angemeldeten Geräte des Admin-Kontos, einzeln
+  oder „alle (anderen) abmelden“ (`admin_devices`, `admin_sign_out_devices`).
+- Gibt es mehrere Admins, legt das Secret `ADMIN_LOGIN_USER_ID` fest, in welches Konto der
+  Passwort-Login führt.
+
 ```bash
 npm run review-ai-answers -- --apply-approved --dry-run   # zeigt, was übernommen würde
 npm run review-ai-answers -- --apply-approved             # Freigaben → Fragen-JSONs, in der DB "exportiert"
@@ -269,6 +289,10 @@ Profil-Knopf oben auf der Startseite bzw. ein wegklickbarer Hinweis nach der ers
   zusammengeführt (`src/domain/progressSync.ts`): Tagesrunden vereinigt (gleicher Tag nur einmal, Konto
   gewinnt), Statistik/Serie aus dem Verlauf neu berechnet; kurze Meldung, was übernommen wurde.
 - **Sync:** Snapshot pro Konto in `player_progress` (RLS: nur eigener), localStorage bleibt Offline-Cache.
+- **Angemeldet bleiben:** Die Sitzung liegt in localStorage (`hal:v1:auth`; installierte App und
+  Browser teilen sie auf Android) und wird automatisch erneuert. Scheitert das Erneuern nur am
+  Netz, bleibt das Konto gespeichert – es wird nie durch eine Gast-Sitzung ersetzt
+  (`src/services/supabase/session.ts`). „Abmelden“ meldet nur dieses Gerät ab.
 - **Profil:** Spielername (eindeutig, 3–20 Zeichen, Beleidigungsfilter in der DB), 12 Pixel-Avatare.
   Namen sind öffentlich lesbar (Freunde-Modus), sonst nichts.
 - **Konto löschen:** Edge Function `delete-account` löscht den Auth-Nutzer; per CASCADE verschwinden

@@ -15,8 +15,8 @@ export function useRoom(code: string) {
           const ch = supabase
             .channel(`room:${c}`)
             .on('broadcast', { event: 'state' }, () => h.onState())
-            .on('broadcast', { event: 'answered' }, (m) => h.onAnswered(m.payload as { idx: number; user_id: string }))
-            .on('broadcast', { event: 'tried' }, (m) => h.onTried?.(m.payload as { idx: number; user_id: string; n: number }))
+            .on('broadcast', { event: 'answered' }, (m) => h.onAnswered(m.payload as { idx: number; user_id: string; round?: number }))
+            .on('broadcast', { event: 'tried' }, (m) => h.onTried?.(m.payload as { idx: number; user_id: string; n: number; round?: number }))
             .subscribe((status) => h.onStatus(status));
           return () => void supabase!.removeChannel(ch);
         },

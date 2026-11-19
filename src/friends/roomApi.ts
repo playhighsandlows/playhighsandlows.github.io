@@ -17,6 +17,9 @@ export interface RoomPlayer {
   /** Versuche bei der laufenden Frage – nur die Anzahl */
   attempts: number;
   points: number;
+  /** Serie im selben Raum: Punkte und Runden aus früheren Runden („Nochmal“) */
+  series_points?: number;
+  series_rounds?: number;
 }
 
 export interface RevealPlayer {

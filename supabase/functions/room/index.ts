@@ -108,6 +108,8 @@ interface Player {
   kicked: boolean;
   joined_at: string;
   last_seen: string;
+  series_points?: number;
+  series_rounds?: number;
 }
 interface AnswerRow {
   user_id: string;
@@ -314,11 +316,12 @@ async function start(uid: string, body: Record<string, unknown>) {
   const { data: qs } = await db.from('questions').select('id, prompt, topic').in('id', plan.flatMap((p) => (p.kind === 'catalog' ? [p.id] : [])));
   const byId = new Map(((qs ?? []) as { id: string; prompt: string; topic: string }[]).map((q) => [q.id, q]));
 
-  await db.from('room_questions').delete().eq('room_id', room.id);
+  // sauberer Start: nichts aus früheren Runden (oder einem abgebrochenen Start) bleibt liegen
+  await clearRoundData(room.id);
   const rows = plan.map((p, idx) =>
     p.kind === 'catalog'
-      ? { room_id: room.id, idx, question_id: p.id, prompt: byId.get(p.id)?.prompt ?? '?', topic: byId.get(p.id)?.topic ?? null, lang: s.lang }
-      : { room_id: room.id, idx, custom_prompt: p.prompt, prompt: p.prompt, topic: null, lang: s.lang },
+      ? { room_id: room.id, round: room.round, idx, question_id: p.id, prompt: byId.get(p.id)?.prompt ?? '?', topic: byId.get(p.id)?.topic ?? null, lang: s.lang }
+      : { room_id: room.id, round: room.round, idx, custom_prompt: p.prompt, prompt: p.prompt, topic: null, lang: s.lang },
   );
   const { error } = await db.from('room_questions').insert(rows);
   if (error) throw new Fail(error.message, 500);
@@ -389,9 +392,9 @@ async function answer(uid: string, jwt: string, body: Record<string, unknown>): 
   const [players, banned, { data: accepted }, { data: before }, { data: rq }] = await Promise.all([
     loadPlayers(room.id),
     isBanned(uid),
-    db.from('room_answers').select('user_id').eq('room_id', room.id).eq('idx', idx).eq('user_id', uid).maybeSingle(),
-    db.from('room_attempts').select('user_id, n, raw, status, reason, ai, created_at').eq('room_id', room.id).eq('idx', idx).eq('user_id', uid).order('n'),
-    db.from('room_questions').select('question_id, custom_prompt').eq('room_id', room.id).eq('idx', idx).single(),
+    db.from('room_answers').select('user_id').eq('room_id', room.id).eq('round', room.round).eq('idx', idx).eq('user_id', uid).maybeSingle(),
+    db.from('room_attempts').select('user_id, n, raw, status, reason, ai, created_at').eq('room_id', room.id).eq('round', room.round).eq('idx', idx).eq('user_id', uid).order('n'),
+    db.from('room_questions').select('question_id, custom_prompt').eq('room_id', room.id).eq('round', room.round).eq('idx', idx).single(),
   ]);
   const me = players.find((p) => p.user_id === uid);
   if (!me || !playsQuestion(me, idx)) throw new Fail('not_playing', 403);
@@ -402,7 +405,7 @@ async function answer(uid: string, jwt: string, body: Record<string, unknown>): 
   for (const a of attempts.filter((x) => x.status === 'pending')) {
     if (now - Date.parse(a.created_at) < 15_000) throw new Fail('busy', 409);
     a.status = 'unchecked';
-    await db.from('room_attempts').update({ status: 'unchecked' }).eq('room_id', room.id).eq('idx', idx).eq('user_id', uid).eq('n', a.n);
+    await db.from('room_attempts').update({ status: 'unchecked' }).eq('room_id', room.id).eq('round', room.round).eq('idx', idx).eq('user_id', uid).eq('n', a.n);
   }
   const aiUsed = attempts.filter((a) => a.ai).length;
   const reply = (r: Partial<AttemptReply> & { accepted: boolean }, used = aiUsed, count = attempts.length): AttemptReply => ({ ai_left: Math.max(0, MAX_AI_CHECKS - used), attempts: count, ...r });
@@ -413,19 +416,19 @@ async function answer(uid: string, jwt: string, body: Record<string, unknown>): 
   if (attempts.length >= ROOM_MAX_ATTEMPTS) return reply({ accepted: false, reason: 'too_many' });
 
   const n = (attempts.at(-1)?.n ?? 0) + 1;
-  const base = { room_id: room.id, idx, user_id: uid, n, raw, normalized: normalize(raw).slice(0, 100) };
+  const base = { room_id: room.id, round: room.round, idx, user_id: uid, n, raw, normalized: normalize(raw).slice(0, 100) };
   const record = async (row: Partial<AttemptRow>) => {
     const { error } = await db.from('room_attempts').insert({ ...base, ...row });
     // gleichzeitiger Versuch desselben Spielers (gleiche Nummer)
     if (error?.code === '23505') throw new Fail('busy', 409);
     if (error) throw new Fail(error.message, 500);
   };
-  const settle = (row: Partial<AttemptRow>) => db.from('room_attempts').update(row).eq('room_id', room.id).eq('idx', idx).eq('user_id', uid).eq('n', n);
+  const settle = (row: Partial<AttemptRow>) => db.from('room_attempts').update(row).eq('room_id', room.id).eq('round', room.round).eq('idx', idx).eq('user_id', uid).eq('n', n);
   /** Gültig: als gewertete Antwort eintragen – nur solange die Frage noch läuft. */
   const accept = async (patch: Partial<AnswerRow>): Promise<boolean> => {
     const fresh = await loadRoom(room.code);
-    if (fresh.status !== 'question' || fresh.current_index !== idx) return false;
-    const { error } = await db.from('room_answers').insert({ room_id: room.id, idx, user_id: uid, raw, normalized: base.normalized, attempts: n, ...patch });
+    if (fresh.status !== 'question' || fresh.current_index !== idx || fresh.round !== room.round) return false;
+    const { error } = await db.from('room_answers').insert({ room_id: room.id, round: room.round, idx, user_id: uid, raw, normalized: base.normalized, attempts: n, ...patch });
     if (error?.code === '23505') throw new Fail('already_answered', 409);
     if (error) throw new Fail(error.message, 500);
     return true;
@@ -523,8 +526,8 @@ async function advance(code: string, force = false): Promise<void> {
     let pending = false;
     if (room.status === 'question') {
       const [{ data }, { count }] = await Promise.all([
-        db.from('room_answers').select('user_id, status').eq('room_id', room.id).eq('idx', room.current_index).eq('status', 'valid'),
-        db.from('room_attempts').select('n', { count: 'exact', head: true }).eq('room_id', room.id).eq('idx', room.current_index).eq('status', 'pending'),
+        db.from('room_answers').select('user_id, status').eq('room_id', room.id).eq('round', room.round).eq('idx', room.current_index).eq('status', 'valid'),
+        db.from('room_attempts').select('n', { count: 'exact', head: true }).eq('room_id', room.id).eq('round', room.round).eq('idx', room.current_index).eq('status', 'pending'),
       ]);
       const playing = players.filter((p) => playsQuestion(p, room.current_index));
       // „geantwortet“ heißt: eine gültige Antwort – wer noch rät, hält die Frage bis zum Zeitablauf offen
@@ -546,7 +549,7 @@ async function advance(code: string, force = false): Promise<void> {
       const seconds = room.settings.seconds ?? 25;
       const endsAt = Date.now() + seconds * 1000;
       const updated = await casUpdate(room, { status: 'question', current_index: t.index, phase_ends_at: iso(endsAt) });
-      if (updated) await db.from('room_questions').update({ started_at: new Date().toISOString(), ends_at: iso(endsAt) }).eq('room_id', room.id).eq('idx', t.index);
+      if (updated) await db.from('room_questions').update({ started_at: new Date().toISOString(), ends_at: iso(endsAt) }).eq('room_id', room.id).eq('round', room.round).eq('idx', t.index);
       return;
     }
     if (t.to === 'finished') {
@@ -564,11 +567,11 @@ async function advance(code: string, force = false): Promise<void> {
 /** Aktuelle Frage auswerten und die Auflösung speichern. */
 async function scoreCurrent(room: Room): Promise<void> {
   const idx = room.current_index;
-  await closeAttempts(room.id, idx);
+  await closeAttempts(room, idx);
   const [players, answersRes, rqRes] = await Promise.all([
     loadPlayers(room.id),
-    db.from('room_answers').select('*').eq('room_id', room.id).eq('idx', idx),
-    db.from('room_questions').select('question_id, custom_prompt').eq('room_id', room.id).eq('idx', idx).single(),
+    db.from('room_answers').select('*').eq('room_id', room.id).eq('round', room.round).eq('idx', idx),
+    db.from('room_questions').select('question_id, custom_prompt').eq('room_id', room.id).eq('round', room.round).eq('idx', idx).single(),
   ]);
   const rows = (answersRes.data ?? []) as AnswerRow[];
   const custom = !!rqRes.data?.custom_prompt;
@@ -583,10 +586,11 @@ async function scoreCurrent(room: Room): Promise<void> {
  * Antwort eingetragen – so sieht man in der Auflösung, woran es lag, und der Gastgeber kann
  * sie noch gelten lassen. Gültige Antworten bekommen die Zahl der Versuche.
  */
-async function closeAttempts(roomId: string, idx: number): Promise<void> {
+async function closeAttempts(room: Room, idx: number): Promise<void> {
+  const roomId = room.id;
   const [{ data: att }, { data: ans }] = await Promise.all([
-    db.from('room_attempts').select('user_id, n, raw, status, reason, ai').eq('room_id', roomId).eq('idx', idx).order('n'),
-    db.from('room_answers').select('user_id').eq('room_id', roomId).eq('idx', idx),
+    db.from('room_attempts').select('user_id, n, raw, status, reason, ai').eq('room_id', roomId).eq('round', room.round).eq('idx', idx).order('n'),
+    db.from('room_answers').select('user_id').eq('room_id', roomId).eq('round', room.round).eq('idx', idx),
   ]);
   const have = new Set(((ans ?? []) as { user_id: string }[]).map((a) => a.user_id));
   const last = new Map<string, AttemptRow>();
@@ -596,6 +600,7 @@ async function closeAttempts(roomId: string, idx: number): Promise<void> {
   await db.from('room_answers').upsert(
     missing.map((a) => ({
       room_id: roomId,
+      round: room.round,
       idx,
       user_id: a.user_id,
       raw: a.raw,
@@ -607,7 +612,7 @@ async function closeAttempts(roomId: string, idx: number): Promise<void> {
       global_points: 0,
       attempts: a.n,
     })),
-    { onConflict: 'room_id,idx,user_id', ignoreDuplicates: true },
+    { onConflict: 'room_id,round,idx,user_id', ignoreDuplicates: true },
   );
 }
 
@@ -633,7 +638,7 @@ async function buildReveal(room: Room, idx: number, players: Player[], rows: Ans
   await Promise.all(
     Object.entries(score.perPlayer)
       .filter(([u]) => rows.some((r) => r.user_id === u))
-      .map(([u, p]) => db.from('room_answers').update({ points: p.points, tier: p.tier }).eq('room_id', room.id).eq('idx', idx).eq('user_id', u)),
+      .map(([u, p]) => db.from('room_answers').update({ points: p.points, tier: p.tier }).eq('room_id', room.id).eq('round', room.round).eq('idx', idx).eq('user_id', u)),
   );
   // Zur Einordnung (nur Katalogfragen): häufigste und seltenste Listen-Antwort
   let list: { top: string | null; rarest: string | null } | null = null;
@@ -644,7 +649,7 @@ async function buildReveal(room: Room, idx: number, players: Player[], rows: Ans
     list = { top: sorted[0]?.text ?? null, rarest: sorted.at(-1)?.text ?? null };
   }
   // Versuche: Anzahl je Spieler immer; die Fehlversuche selbst nur, wenn der Raum es erlaubt
-  const { data: att } = await db.from('room_attempts').select('user_id, n, raw, status, reason, ai').eq('room_id', room.id).eq('idx', idx).order('n');
+  const { data: att } = await db.from('room_attempts').select('user_id, n, raw, status, reason, ai').eq('room_id', room.id).eq('round', room.round).eq('idx', idx).order('n');
   const attempts = ((att ?? []) as AttemptRow[]).filter((a) => participants.includes(a.user_id));
   const tries: Record<string, number> = {};
   for (const a of attempts) tries[a.user_id] = Math.max(tries[a.user_id] ?? 0, a.n);
@@ -666,7 +671,7 @@ async function buildReveal(room: Room, idx: number, players: Player[], rows: Ans
     list,
     funny,
   };
-  await db.from('room_questions').update({ reveal }).eq('room_id', room.id).eq('idx', idx);
+  await db.from('room_questions').update({ reveal }).eq('room_id', room.id).eq('round', room.round).eq('idx', idx);
   return reveal;
 }
 
@@ -678,11 +683,11 @@ async function next(uid: string, body: Record<string, unknown>) {
   const prompt = typeof body.custom_prompt === 'string' ? body.custom_prompt.replace(/\s+/g, ' ').trim().slice(0, CUSTOM_PROMPT_MAX) : '';
   if (prompt.length >= 3) {
     const at = room.current_index + 1;
-    const { data: later } = await db.from('room_questions').select('idx').eq('room_id', room.id).gte('idx', at).order('idx', { ascending: false });
+    const { data: later } = await db.from('room_questions').select('idx').eq('room_id', room.id).eq('round', room.round).gte('idx', at).order('idx', { ascending: false });
     for (const r of (later ?? []) as { idx: number }[]) {
-      await db.from('room_questions').update({ idx: r.idx + 1 }).eq('room_id', room.id).eq('idx', r.idx);
+      await db.from('room_questions').update({ idx: r.idx + 1 }).eq('room_id', room.id).eq('round', room.round).eq('idx', r.idx);
     }
-    await db.from('room_questions').insert({ room_id: room.id, idx: at, custom_prompt: prompt, prompt, lang: room.settings.lang });
+    await db.from('room_questions').insert({ room_id: room.id, round: room.round, idx: at, custom_prompt: prompt, prompt, lang: room.settings.lang });
     const fresh = await loadRoom(room.code);
     await casUpdate(fresh, { question_count: fresh.question_count + 1 });
   }
@@ -697,11 +702,11 @@ async function override(uid: string, body: Record<string, unknown>) {
   const idx = room.current_index;
   const users = Array.isArray(body.user_ids) ? body.user_ids.filter((u): u is string => typeof u === 'string') : [];
   if (!users.length) throw new Fail('bad_target');
-  await db.from('room_answers').update({ override_valid: body.valid === true }).eq('room_id', room.id).eq('idx', idx).in('user_id', users);
+  await db.from('room_answers').update({ override_valid: body.valid === true }).eq('room_id', room.id).eq('round', room.round).eq('idx', idx).in('user_id', users);
   const [players, answersRes, rqRes] = await Promise.all([
     loadPlayers(room.id),
-    db.from('room_answers').select('*').eq('room_id', room.id).eq('idx', idx),
-    db.from('room_questions').select('question_id, custom_prompt').eq('room_id', room.id).eq('idx', idx).single(),
+    db.from('room_answers').select('*').eq('room_id', room.id).eq('round', room.round).eq('idx', idx),
+    db.from('room_questions').select('question_id, custom_prompt').eq('room_id', room.id).eq('round', room.round).eq('idx', idx).single(),
   ]);
   await buildReveal(room, idx, players, (answersRes.data ?? []) as AnswerRow[], !!rqRes.data?.custom_prompt, rqRes.data?.question_id ?? null);
   // Auflösung etwas verlängern, damit alle die Korrektur sehen
@@ -709,15 +714,51 @@ async function override(uid: string, body: Record<string, unknown>) {
   return { ok: true };
 }
 
+/** Fragen, Antworten und Versuche des Raums löschen (alle Runden). */
+async function clearRoundData(roomId: string) {
+  await Promise.all([
+    db.from('room_answers').delete().eq('room_id', roomId),
+    db.from('room_attempts').delete().eq('room_id', roomId),
+    db.from('room_questions').delete().eq('room_id', roomId),
+  ]);
+}
+
+/**
+ * „Nochmal“: neue, saubere Runde im selben Raum – gleiche Spieler und Einstellungen, zurück in
+ * die Lobby. Punkte der fertigen Runde wandern in die Serie (series_points/series_rounds); die
+ * Antworten, Versuche und Fragen der alten Runde werden gelöscht.
+ */
 async function again(uid: string, body: Record<string, unknown>) {
   const room = await loadRoom(body.code);
   requireHost(room, uid);
   if (room.status !== 'finished') throw new Fail('not_finished', 409);
   if (room.ended_by_admin) throw new Fail('ended_by_admin', 409);
-  await db.from('room_questions').delete().eq('room_id', room.id);
-  await db.from('room_players').update({ from_index: 0 }).eq('room_id', room.id);
-  await casUpdate(room, { status: 'lobby', current_index: -1, question_count: 0, phase_ends_at: null, round: room.round + 1 });
-  return { ok: true };
+  // erst den Raum umstellen (genau einmal, auch wenn mehrfach geklickt wird) …
+  const next = await casUpdate(room, { status: 'lobby', current_index: -1, question_count: 0, phase_ends_at: null, round: room.round + 1 });
+  if (!next) throw new Fail('conflict', 409);
+  // … dann die Serie fortschreiben (nur aufgelöste Fragen der fertigen Runde zählen)
+  const [players, { data: rows }, { data: revealed }] = await Promise.all([
+    loadPlayers(room.id),
+    db.from('room_answers').select('user_id, idx, points').eq('room_id', room.id).eq('round', room.round),
+    db.from('room_questions').select('idx').eq('room_id', room.id).eq('round', room.round).not('reveal', 'is', null),
+  ]);
+  const done = new Set(((revealed ?? []) as { idx: number }[]).map((q) => q.idx));
+  const gained = new Map<string, number>();
+  for (const a of (rows ?? []) as { user_id: string; idx: number; points: number }[]) if (done.has(a.idx)) gained.set(a.user_id, (gained.get(a.user_id) ?? 0) + (a.points ?? 0));
+  await Promise.all(
+    players
+      .filter((p) => !p.kicked)
+      .map((p) =>
+        db
+          .from('room_players')
+          .update({ from_index: 0, series_points: (p.series_points ?? 0) + (gained.get(p.user_id) ?? 0), series_rounds: (p.series_rounds ?? 0) + (done.size > 0 ? 1 : 0) })
+          .eq('room_id', room.id)
+          .eq('user_id', p.user_id),
+      ),
+  );
+  await clearRoundData(room.id);
+  await bump(room.id);
+  return { ok: true, round: next.round };
 }
 
 // ---------------------------------------------------------------- HTTP

@@ -68,6 +68,7 @@ export function Lobby({ s, isHost, onLeave }: { s: RoomState; isHost: boolean; o
 
       <Panel tone="wood" className="px-1">
         <h2 className="font-tiny text-xs uppercase opacity-75">{t('friends.players', { count: s.players.length })}</h2>
+        {s.round > 1 && <p className="mt-1 text-sm opacity-80">{t('friends.seriesInfo', { round: s.round })}</p>}
         <ul className="mt-2 grid gap-2">
           {s.players.map((p) => (
             <li key={p.user_id} className="flex items-center gap-2">
@@ -76,6 +77,12 @@ export function Lobby({ s, isHost, onLeave }: { s: RoomState; isHost: boolean; o
                 {p.name}
                 {p.user_id === s.me && <span className="ml-1 text-sm font-normal opacity-70">({t('friends.you')})</span>}
               </span>
+              {/* Serie aus früheren Runden in diesem Raum („Nochmal“) */}
+              {(p.series_rounds ?? 0) > 0 && (
+                <span className="shrink-0 text-sm tabular-nums opacity-80" title={t('friends.seriesTitle', { count: p.series_rounds })} data-series>
+                  Σ {p.series_points}
+                </span>
+              )}
               {isHost && p.user_id !== s.me && (
                 <button
                   type="button"

@@ -509,11 +509,11 @@ async function handle(req: Request): Promise<Response> {
 async function judgeRoomCustom(userId: string, code: string, idx: number, rawAnswer: unknown): Promise<Response> {
   const answer = typeof rawAnswer === 'string' ? rawAnswer.trim().slice(0, MAX_ANSWER_LENGTH) : '';
   if (!cacheKey(answer)) return json(verdict({ status: 'invalid' }));
-  const { data: room } = await admin.from('rooms').select('id, status, current_index').eq('code', code.toUpperCase()).maybeSingle();
+  const { data: room } = await admin.from('rooms').select('id, status, current_index, round').eq('code', code.toUpperCase()).maybeSingle();
   if (!room || room.current_index !== idx || !['question', 'scoring'].includes(room.status)) return json({ error: 'forbidden' }, 403);
   const [{ data: member }, { data: rq }, { data: banned }] = await Promise.all([
     admin.from('room_players').select('user_id').eq('room_id', room.id).eq('user_id', userId).eq('kicked', false).maybeSingle(),
-    admin.from('room_questions').select('custom_prompt, lang').eq('room_id', room.id).eq('idx', idx).maybeSingle(),
+    admin.from('room_questions').select('custom_prompt, lang').eq('room_id', room.id).eq('round', room.round).eq('idx', idx).maybeSingle(),
     admin.from('player_bans').select('user_id').eq('user_id', userId).maybeSingle(),
   ]);
   if (!member || !rq?.custom_prompt || banned) return json({ error: 'forbidden' }, 403);

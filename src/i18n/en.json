@@ -362,7 +362,12 @@
     "tooManyAttempts": "Too many attempts on this question",
     "noAiLeftCustom": "No AI checks left – the host can still accept your last answer",
     "funnyAttempts_one": "{{count}} failed attempt this round",
-    "funnyAttempts_other": "{{count}} failed attempts this round"
+    "funnyAttempts_other": "{{count}} failed attempts this round",
+    "seriesTitle_one": "Points from {{count}} earlier round",
+    "seriesTitle_other": "Points from {{count}} earlier rounds",
+    "seriesInfo": "Round {{round}} in this room – points from earlier rounds add up as a series (Σ).",
+    "seriesTotal_one": "Series after {{count}} round",
+    "seriesTotal_other": "Series after {{count}} rounds"
   },
   "milestone": {
     "hell": {

@@ -11,6 +11,7 @@ import { QuestionsTab } from './QuestionsTab';
 import { PlayersTab } from './PlayersTab';
 import { SystemTab } from './SystemTab';
 import { RoomsTab } from './RoomsTab';
+import { PasswordLoginForm, SecurityPanel } from './SecurityPanel';
 
 /**
  * Admin-Dashboard unter /admin (nur über den Button im Profil verlinkt).
@@ -64,12 +65,14 @@ export default function AdminApp() {
           <div className="mt-4">
             <SignInButtons />
           </div>
+          <PasswordLoginForm />
         </Panel>
       </div>,
     );
   }
 
-  const signOut = () => void adminDb!.auth.signOut();
+  // nur dieses Gerät abmelden (Standard wäre: alle Geräte)
+  const signOut = () => void adminDb!.auth.signOut({ scope: 'local' });
   const name = (session.user.user_metadata?.user_name as string | undefined) ?? session.user.email ?? session.user.id;
 
   if (isAdmin === null) return shell(<p className="text-center opacity-70">Prüfe Zugriff …</p>);
@@ -83,6 +86,7 @@ export default function AdminApp() {
           <PxButton tone="stone" small className="mt-4 text-base" onClick={signOut}>
             Abmelden
           </PxButton>
+          <PasswordLoginForm />
         </Panel>
       </div>,
     );
@@ -101,6 +105,7 @@ const TABS = [
   ['rooms', '🎲 Räume'],
   ['players', '👥 Spieler'],
   ['system', '⚙ System'],
+  ['security', '🔐 Sicherheit'],
 ] as const;
 export type TabId = (typeof TABS)[number][0];
 
@@ -184,6 +189,7 @@ function Dashboard({ name, userId, onSignOut }: { name: string; userId: string; 
         {tab === 'rooms' && <RoomsTab selfId={userId} onChanged={refreshOverview} />}
         {tab === 'players' && <PlayersTab selfId={userId} onChanged={refreshOverview} />}
         {tab === 'system' && <SystemTab />}
+        {tab === 'security' && <SecurityPanel />}
       </main>
     </div>
   );

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { supabase } from '../services/supabase/client';
+import { supabase, SUPABASE_ANON_KEY, SUPABASE_URL } from '../services/supabase/client';
 
 /** Ein Login für alles: der Admin-Bereich nutzt denselben Supabase-Client wie das Spiel. */
 export const adminDb: SupabaseClient | null = supabase;
@@ -228,3 +228,86 @@ export const loadRoomCounts = (db: SupabaseClient) => rpc<{ active: number; play
 export const endRoom = (db: SupabaseClient, roomId: string) => rpc<null>(db, 'admin_end_room', { p_room: roomId });
 export const banInRoom = (db: SupabaseClient, roomId: string, userId: string, reason?: string) =>
   rpc<null>(db, 'admin_room_ban', { p_room: roomId, p_user: userId, p_reason: reason ?? null });
+
+// ---------------------------------------------------------------- Admin-Login per Passwort, Admin-Geräte
+
+const DEVICE_KEY = 'hal:v1:device';
+/** Zufällige, dauerhafte Geräte-Kennung (für die Versuchsbremse pro Gerät). */
+export function deviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    return 'unbekannt';
+  }
+}
+
+export type PasswordLoginResult =
+  | { ok: true }
+  | { ok: false; error: 'wrong'; left: number; lockedUntil: string | null; scope: 'device' | 'global' | null }
+  | { ok: false; error: 'locked'; lockedUntil: string; scope: 'device' | 'global' }
+  | { ok: false; error: 'not_configured' | 'offline' | 'server_error' };
+
+/**
+ * Admin-Login per Passwort über die Edge Function admin-login. Bei Erfolg wird die gelieferte
+ * Sitzung des Admin-Kontos übernommen (bleibt 30 Tage, bis Abmelden).
+ */
+export async function passwordLogin(db: SupabaseClient, password: string): Promise<PasswordLoginResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${SUPABASE_URL}/functions/v1/admin-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ password, device: deviceId() }),
+    });
+  } catch {
+    return { ok: false, error: 'offline' };
+  }
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (res.ok && typeof body.access_token === 'string' && typeof body.refresh_token === 'string') {
+    const { error } = await db.auth.setSession({ access_token: body.access_token, refresh_token: body.refresh_token });
+    return error ? { ok: false, error: 'server_error' } : { ok: true };
+  }
+  if (body.error === 'locked') return { ok: false, error: 'locked', lockedUntil: String(body.until), scope: body.scope === 'global' ? 'global' : 'device' };
+  if (body.error === 'wrong') {
+    const l = body.locked as { scope: 'device' | 'global'; until: string } | null;
+    return { ok: false, error: 'wrong', left: Number(body.left ?? 0), lockedUntil: l?.until ?? null, scope: l?.scope ?? null };
+  }
+  if (body.error === 'not_configured') return { ok: false, error: 'not_configured' };
+  return { ok: false, error: 'server_error' };
+}
+
+export interface AdminDevice {
+  id: string;
+  created_at: string;
+  last_seen: string | null;
+  user_agent: string | null;
+  ip: string | null;
+  expires_at: string | null;
+  current: boolean;
+  /** über das Admin-Passwort angemeldet */
+  password: boolean;
+}
+export const loadDevices = (db: SupabaseClient) => rpc<AdminDevice[]>(db, 'admin_devices');
+/** Ein Gerät abmelden (id) bzw. alle (ohne id), wahlweise außer diesem. */
+export const signOutDevices = (db: SupabaseClient, sessionId: string | null, keepCurrent = true) =>
+  rpc<number>(db, 'admin_sign_out_devices', { p_session: sessionId, p_keep_current: keepCurrent });
+
+export interface LoginAttempt {
+  id: number;
+  created_at: string;
+  ok: boolean;
+  locked: boolean;
+  ip: string | null;
+  device: string | null;
+  user_agent: string | null;
+}
+export async function loadLoginAttempts(db: SupabaseClient, limit = 50): Promise<LoginAttempt[]> {
+  const { data, error } = await db.from('admin_login_attempts').select('id, created_at, ok, locked, ip, device, user_agent').order('created_at', { ascending: false }).limit(limit);
+  if (error) throw new Error(error.message);
+  return data as LoginAttempt[];
+}

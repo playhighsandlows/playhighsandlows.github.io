@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { makeEnsureSession } from './session';
 
 /**
  * Supabase-Anbindung (optional). Das Frontend kennt nur URL und anon/publishable
@@ -19,26 +20,14 @@ export const supabase: SupabaseClient | null =
 export const SUPABASE_URL = url ?? '';
 export const SUPABASE_ANON_KEY = anonKey ?? '';
 
-let pending: Promise<string | null> | null = null;
+/** Speicherschlüssel der Sitzung (localStorage; installierte App und Browser teilen ihn auf Android). */
+export const AUTH_STORAGE_KEY = 'hal:v1:auth';
 
 /**
- * Zugriffstoken des Spielers. Beim ersten Mal wird anonym angemeldet –
- * jeder Spieler bekommt so eine feste ID, ganz ohne Registrierung.
+ * Zugriffstoken des Spielers. Beim allerersten Mal wird anonym angemeldet – jeder Spieler
+ * bekommt so eine feste ID, ganz ohne Registrierung. Eine gespeicherte Anmeldung wird nie
+ * durch eine Gast-Sitzung ersetzt (siehe session.ts).
  */
-export function ensureSession(): Promise<string | null> {
-  if (!supabase) return Promise.resolve(null);
-  pending ??= (async () => {
-    const { data } = await supabase.auth.getSession();
-    if (data.session) return data.session.access_token;
-    const { data: signIn, error } = await supabase.auth.signInAnonymously();
-    if (error) {
-      console.warn('Anonyme Anmeldung fehlgeschlagen:', error.message);
-      return null;
-    }
-    return signIn.session?.access_token ?? null;
-  })().finally(() => {
-    // Nächster Aufruf fragt erneut (Token kann sich erneuert haben).
-    pending = null;
-  });
-  return pending;
-}
+export const ensureSession: () => Promise<string | null> = supabase
+  ? makeEnsureSession(supabase.auth, typeof localStorage === 'undefined' ? null : localStorage, AUTH_STORAGE_KEY)
+  : () => Promise.resolve(null);

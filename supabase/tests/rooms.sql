@@ -75,6 +75,31 @@ begin
 end $$;
 reset role;
 
+-- ================================================================ „Nochmal“: neue Runde sieht nichts von der alten
+update public.rooms set round = 2, status = 'question', current_index = 0 where id = '00000000-0000-4000-8000-0000000000d1';
+insert into public.room_questions (room_id, round, idx, question_id, prompt, lang)
+values ('00000000-0000-4000-8000-0000000000d1', 2, 1, 'zz-test-001', 'Neue Frage Runde 2', 'de');
+update public.room_questions set idx = 0 where room_id = '00000000-0000-4000-8000-0000000000d1' and round = 2;
+update public.room_players set series_points = 100, series_rounds = 1 where user_id = '00000000-0000-4000-8000-0000000000f1';
+set local role authenticated;
+set local request.jwt.claims to '{"sub":"00000000-0000-4000-8000-0000000000f1","role":"authenticated"}';
+do $$
+declare s jsonb;
+begin
+  s := public.room_state('TESTAB');
+  -- Antworten und Versuche der Runde 1 liegen noch unter idx 0 – dürfen in Runde 2 nicht zählen
+  if s -> 'my_answer' <> 'null'::jsonb then raise exception 'FAIL: Antwort der alten Runde als my_answer (kein Eingabefeld) %', s -> 'my_answer'; end if;
+  if jsonb_array_length(s -> 'my_attempts') <> 0 then raise exception 'FAIL: Versuche der alten Runde sichtbar %', s -> 'my_attempts'; end if;
+  if (select bool_or((p ->> 'answered')::boolean) from jsonb_array_elements(s -> 'players') p) then raise exception 'FAIL: „hat geantwortet“ aus der alten Runde'; end if;
+  if (select sum((p ->> 'attempts')::int) from jsonb_array_elements(s -> 'players') p) <> 0 then raise exception 'FAIL: Versuchszähler aus der alten Runde'; end if;
+  if (select sum((p ->> 'points')::int) from jsonb_array_elements(s -> 'players') p) <> 0 then raise exception 'FAIL: Punkte aus der alten Runde'; end if;
+  if s -> 'question' ->> 'prompt' <> 'Neue Frage Runde 2' then raise exception 'FAIL: alte Frage statt neuer: %', s -> 'question'; end if;
+  if (select (p ->> 'series_points')::int from jsonb_array_elements(s -> 'players') p where p ->> 'name' = 'Gastgeberin') <> 100 then raise exception 'FAIL: Serie fehlt'; end if;
+end $$;
+reset role;
+delete from public.room_questions where room_id = '00000000-0000-4000-8000-0000000000d1' and round = 2;
+update public.rooms set round = 1, status = 'question' where id = '00000000-0000-4000-8000-0000000000d1';
+
 -- ================================================================ Außenstehender
 set local role authenticated;
 set local request.jwt.claims to '{"sub":"00000000-0000-4000-8000-0000000000f3","role":"authenticated"}';

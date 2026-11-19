@@ -134,8 +134,12 @@ export async function handleAuthCallback(db: SupabaseClient | null = supabase, h
   return intent.step === 'link' ? { kind: 'upgraded' } : { kind: 'switched' };
 }
 
+/**
+ * Abmelden – nur auf DIESEM Gerät. (Der Standard von supabase-js ist „global“: Das meldete
+ * bei jedem Abmelden auch alle anderen Geräte und die installierte App mit ab.)
+ */
 export async function signOut(db: SupabaseClient | null = supabase) {
-  await db?.auth.signOut();
+  await db?.auth.signOut({ scope: 'local' });
 }
 
 /** Konto endgültig löschen (Edge Function delete-account; löscht alle Daten serverseitig). */

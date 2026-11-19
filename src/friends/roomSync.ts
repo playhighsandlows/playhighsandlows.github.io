@@ -13,9 +13,9 @@ import type { RoomPreview, RoomState } from './roomApi';
 
 export interface ChannelHandlers {
   onState: () => void;
-  onAnswered: (p: { idx: number; user_id: string }) => void;
+  onAnswered: (p: { idx: number; user_id: string; round?: number }) => void;
   /** „versucht es noch“ – nur die Anzahl */
-  onTried?: (p: { idx: number; user_id: string; n: number }) => void;
+  onTried?: (p: { idx: number; user_id: string; n: number; round?: number }) => void;
   onStatus: (s: 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT') => void;
 }
 
@@ -104,15 +104,16 @@ export class RoomSync {
     this.unsub?.();
     this.unsub = this.deps.subscribe(this.code, {
       onState: () => void this.refresh(),
-      onAnswered: ({ idx, user_id }) => {
+      onAnswered: ({ idx, user_id, round }) => {
         const s = this.state;
-        if (!s || 'error' in s || s.index !== idx) return;
+        // Ereignisse einer anderen Runde („Nochmal“) oder Frage verwerfen
+        if (!s || 'error' in s || s.index !== idx || (round !== undefined && round !== s.round)) return;
         this.state = { ...s, players: s.players.map((p) => (p.user_id === user_id ? { ...p, answered: true } : p)) };
         this.emit();
       },
-      onTried: ({ idx, user_id, n }) => {
+      onTried: ({ idx, user_id, n, round }) => {
         const s = this.state;
-        if (!s || 'error' in s || s.index !== idx) return;
+        if (!s || 'error' in s || s.index !== idx || (round !== undefined && round !== s.round)) return;
         this.state = { ...s, players: s.players.map((p) => (p.user_id === user_id ? { ...p, attempts: Math.max(p.attempts ?? 0, n) } : p)) };
         this.emit();
       },

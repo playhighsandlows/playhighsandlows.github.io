@@ -49,6 +49,19 @@ if (!roomsRes.ok || !roomsBody.includes('Raum-Tests bestanden')) {
 }
 console.log('Raum-Tests bestanden (keine Antworten vor der Auflösung, kein Direktzugriff, Aufräumen).');
 
+// Admin-Login per Passwort und Admin-Geräte
+const loginRes = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ query: readFileSync('supabase/tests/admin_login.sql', 'utf8') }),
+});
+const loginBody = await loginRes.text();
+if (!loginRes.ok || !loginBody.includes('Admin-Login-Tests bestanden')) {
+  console.error('Admin-Login-Tests FEHLGESCHLAGEN:', loginBody.slice(0, 600));
+  process.exit(1);
+}
+console.log('Admin-Login-Tests bestanden (Versuche nur für Admins, Geräte nur eigene, Abmelden, 30 Tage).');
+
 // Zusätzlich über die öffentliche API mit dem anon key: nichts Admin-Relevantes lesbar
 const env = Object.fromEntries(readFileSync('.env.local', 'utf8').split('\n').filter((l) => l.includes('=')).map((l) => l.split(/=(.*)/s).slice(0, 2)));
 const api = (path, init = {}) =>

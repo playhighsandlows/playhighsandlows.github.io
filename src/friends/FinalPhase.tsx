@@ -11,10 +11,13 @@ import { Avatar } from './ui';
 export function FinalPhase({ s, isHost, onLeave }: { s: RoomState; isHost: boolean; onLeave: () => void }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [again, setAgain] = useState(false);
   const byId = new Map(s.players.map((p) => [p.user_id, p]));
   const name = (u: string) => (u === s.me ? t('friends.you') : byId.get(u)?.name ?? '?');
   const ranking = standings(Object.fromEntries(s.players.map((p) => [p.user_id, p.points])));
   const awards = matchAwards(s.reveals ?? []);
+  // Serie: frühere Runden in diesem Raum plus diese
+  const series = s.round > 1 ? standings(Object.fromEntries(s.players.map((p) => [p.user_id, (p.series_points ?? 0) + p.points]))) : null;
   const podium = [ranking[1], ranking[0], ranking[2]];
   const heights = ['h-16', 'h-24', 'h-12'];
 
@@ -70,6 +73,22 @@ export function FinalPhase({ s, isHost, onLeave }: { s: RoomState; isHost: boole
         )}
       </Panel>
 
+      {series && (
+        <Panel tone="wood" className="px-1" data-series>
+          <p className="font-tiny text-xs uppercase opacity-75">{t('friends.seriesTotal', { count: s.round })}</p>
+          <ol className="mt-1 grid gap-1">
+            {series.map((r) => (
+              <li key={r.userId} className={`flex items-center gap-2 ${r.userId === s.me ? 'font-bold' : ''}`}>
+                <span className="w-6 text-right tabular-nums">{r.place}.</span>
+                <Avatar player={byId.get(r.userId)!} scale={2} />
+                <span className="min-w-0 flex-1 truncate">{name(r.userId)}</span>
+                <span className="tabular-nums">{r.points}</span>
+              </li>
+            ))}
+          </ol>
+        </Panel>
+      )}
+
       {(awards.mindReaders || awards.loner) && (
         <Panel tone="wood" className="px-1">
           {awards.mindReaders && (
@@ -103,7 +122,17 @@ export function FinalPhase({ s, isHost, onLeave }: { s: RoomState; isHost: boole
           {copied ? t('friends.copied') : `📤 ${t('friends.shareResultButton')}`}
         </PxButton>
         {isHost ? (
-          <PxButton tone="teal" className="w-full text-xl" onClick={() => void roomCall('again', { code: s.code }).catch(() => {})}>
+          <PxButton
+            tone="teal"
+            className="w-full text-xl"
+            disabled={again}
+            onClick={() => {
+              setAgain(true);
+              void roomCall('again', { code: s.code })
+                .catch(() => {})
+                .finally(() => setAgain(false));
+            }}
+          >
             ↻ {t('friends.again')}
           </PxButton>
         ) : (

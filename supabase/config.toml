@@ -433,6 +433,10 @@ verify_jwt = false
 [functions.delete-account]
 verify_jwt = false
 
+# Admin-Login per Passwort: wird ohne Anmeldung aufgerufen (prüft selbst, mit Versuchsbremse)
+[functions.admin-login]
+verify_jwt = false
+
 # E-Mail-Login per 6-stelligem Code (kein Magic Link). Gleiche Vorlage für alle drei Fälle.
 # (otp_length/otp_expiry stehen oben unter [auth.email])
 [auth.email.template.magic_link]

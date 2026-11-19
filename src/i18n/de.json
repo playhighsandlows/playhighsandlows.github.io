@@ -362,7 +362,12 @@
     "tooManyAttempts": "Zu viele Versuche bei dieser Frage",
     "noAiLeftCustom": "Keine KI-Prüfung mehr – der Gastgeber kann deine letzte Antwort noch gelten lassen",
     "funnyAttempts_one": "{{count}} Fehlversuch der Runde",
-    "funnyAttempts_other": "{{count}} Fehlversuche der Runde"
+    "funnyAttempts_other": "{{count}} Fehlversuche der Runde",
+    "seriesTitle_one": "Punkte aus {{count}} früheren Runde",
+    "seriesTitle_other": "Punkte aus {{count}} früheren Runden",
+    "seriesInfo": "Runde {{round}} in diesem Raum – die Punkte früherer Runden zählen als Serie (Σ).",
+    "seriesTotal_one": "Serie nach {{count}} Runde",
+    "seriesTotal_other": "Serie nach {{count}} Runden"
   },
   "milestone": {
     "hell": {

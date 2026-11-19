@@ -13,7 +13,7 @@ Object.assign(globalThis, {
   history: { state: null, replaceState: vi.fn() },
 });
 
-const { signInWith, handleAuthCallback, toAccount } = await import('./account');
+const { signInWith, handleAuthCallback, toAccount, signOut } = await import('./account');
 
 function fakeDb(user: { id: string; is_anonymous: boolean } | null) {
   const auth = {
@@ -151,5 +151,13 @@ describe('E-Mail-Login per 6-stelligem Code (gemockt)', async () => {
     expect(suggestedName({ user_metadata: { custom_claims: { global_name: 'Höhlen Jack 🎈' }, full_name: 'jack#1234' }, email: undefined } as never)).toBe('Höhlen Jack');
     expect(suggestedName({ user_metadata: { full_name: 'Jo' }, email: 'johanna.m@example.com' } as never)).toBe('johanna.m');
     expect(suggestedName({ user_metadata: {}, email: undefined } as never)).toBe('');
+  });
+});
+
+describe('Abmelden', () => {
+  it('meldet nur dieses Gerät ab – nicht alle anderen (Regression: Standard von supabase-js ist „global“)', async () => {
+    const auth = { signOut: vi.fn(async () => ({ error: null })) };
+    await signOut({ auth } as unknown as SupabaseClient);
+    expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
   });
 });
